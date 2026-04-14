@@ -40,9 +40,7 @@ from sklearn.svm import SVC
 
 from features import FEATURE_NAMES, extract_features
 
-# ---------------------------------------------------------------------------
 # Demo data — small hardcoded set for quick testing (replace with real CSV)
-# ---------------------------------------------------------------------------
 
 DEMO_URLS = [
     # Benign (label = 0)
@@ -81,21 +79,27 @@ DEMO_URLS = [
     ('http://ebay.com.password-reset-secure.tk/confirm', 1),
 ]
 
-
-def build_feature_matrix(urls: list[str]) -> pd.DataFrame:
-    records = [extract_features(u) for u in urls]
+def build_feature_matrix(urls):
+    records = []
+    for u in urls:
+        try:
+            records.append(extract_features(u))
+        except Exception:
+            records.append({f: 0 for f in FEATURE_NAMES})
     return pd.DataFrame(records, columns=FEATURE_NAMES)
 
 
-def load_dataset(path = None) -> tuple[pd.DataFrame, np.ndarray]:
+def load_dataset(path=None):
     if path and os.path.exists(path):
         print(f"Loading dataset from {path}")
         df = pd.read_csv(path)
-        # Support both 'label' and 'type' column names
         label_col = 'label' if 'label' in df.columns else 'type'
-        urls  = df['url'].tolist()
-        y     = df[label_col].values.astype(int)
-        X     = build_feature_matrix(urls)
+        urls = df['url'].tolist()
+        if df[label_col].dtype == object:
+            y = (df[label_col] != 'benign').astype(int).values
+        else:
+            y = df[label_col].values.astype(int)
+        X = build_feature_matrix(urls)
         print(f"  Loaded {len(df)} rows — {y.sum()} malicious, {(y==0).sum()} benign")
     else:
         print("No dataset file found. Using built-in demo data.")
@@ -106,9 +110,8 @@ def load_dataset(path = None) -> tuple[pd.DataFrame, np.ndarray]:
     return X, y
 
 
-# ---------------------------------------------------------------------------
+
 # Model definitions
-# ---------------------------------------------------------------------------
 
 def get_models() -> dict:
     return {
@@ -130,9 +133,7 @@ def get_models() -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
 # Training & evaluation
-# ---------------------------------------------------------------------------
 
 def train_and_evaluate(X: pd.DataFrame, y: np.ndarray) -> tuple:
     X_train, X_test, y_train, y_test = train_test_split(
@@ -204,9 +205,7 @@ def save_artifacts(clf, feature_names: list[str], model_name: str) -> None:
     print("  Saved: model_meta.json")
 
 
-# ---------------------------------------------------------------------------
 # Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train Malicious URL Classifier')

@@ -7,9 +7,7 @@ import re
 import math
 from urllib.parse import urlparse
 
-# ---------------------------------------------------------------------------
 # Constants
-# ---------------------------------------------------------------------------
 
 SUSPICIOUS_KEYWORDS = [
     'login', 'signin', 'secure', 'account', 'update', 'verify', 'bank',
@@ -26,9 +24,7 @@ IP_PATTERN = re.compile(
     r'(([01]?\d\d?|2[0-4]\d|25[0-5])\.){3}([01]?\d\d?|2[0-4]\d|25[0-5])'
 )
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def shannon_entropy(s: str) -> float:
     """Shannon entropy — high entropy suggests random/obfuscated strings."""
@@ -53,9 +49,7 @@ def get_subdomain_count(hostname: str) -> int:
     return max(0, len(parts) - 2)
 
 
-# ---------------------------------------------------------------------------
 # Main extractor
-# ---------------------------------------------------------------------------
 
 def extract_features(url: str) -> dict:
     """
@@ -127,8 +121,6 @@ def extract_features(url: str) -> dict:
     return features
 
 
-# ---------------------------------------------------------------------------
 # Feature names (ordered list for DataFrame columns)
-# ---------------------------------------------------------------------------
 
 FEATURE_NAMES = list(extract_features('http://example.com').keys())

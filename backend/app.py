@@ -23,9 +23,7 @@ from flask_cors import CORS
 from features import FEATURE_NAMES, extract_features
 from train_model import build_feature_matrix, load_dataset, train_and_evaluate, save_artifacts
 
-# ---------------------------------------------------------------------------
 # App setup
-# ---------------------------------------------------------------------------
 
 app = Flask(__name__)
 CORS(app)  # Allow React frontend on any port
@@ -52,9 +50,7 @@ def ensure_model():
         print("Demo model ready.")
 
 
-# ---------------------------------------------------------------------------
 # Routes
-# ---------------------------------------------------------------------------
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -130,9 +126,7 @@ def list_features():
     return jsonify({'features': feature_names})
 
 
-# ---------------------------------------------------------------------------
 # Run
-# ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
     ensure_model()
