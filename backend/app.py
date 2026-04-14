@@ -136,5 +136,5 @@ def list_features():
 
 if __name__ == '__main__':
     ensure_model()
-    print("\nServer running at http://localhost:5000")
-    app.run(debug=True, port=5000)
+    print("\nServer running at http://localhost:5001")
+    app.run(debug=True, port=5001)
