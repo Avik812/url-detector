@@ -66,34 +66,23 @@ function extractFeatures(rawUrl) {
 }
 
 async function classifyUrl(url, features) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      system: `You are a scikit-learn Random Forest classifier trained on malicious URL detection using NLP features.
-Analyze the structured URL features and classify the URL. Respond ONLY with valid JSON, no markdown or explanation.
-
-Schema:
-{
-  "prediction": "malicious" | "benign" | "suspicious",
-  "confidence": <0-100>,
-  "malicious_prob": <0-100>,
-  "benign_prob": <0-100>,
-  "risk_signals": [<string up to 5>],
-  "top_features": [{"name": <string>, "value": <any>, "risk": "high"|"medium"|"low"|"none", "note": <string>}]
-}
-
-top_features: the 5 most important features driving your decision.
-risk_signals: specific reasons this URL is or is not suspicious.`,
-      messages: [{ role: "user", content: `URL: ${url}\n\nFeatures:\n${JSON.stringify(features, null, 2)}` }]
-    })
-  });
+  const res = await fetch("/api/predict", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ url })
+});
+  if (!res.ok) throw new Error(`Server error: ${res.status}`);
   const data = await res.json();
-  const text = data.content?.[0]?.text || "{}";
-  try { return JSON.parse(text); }
-  catch { return JSON.parse(text.replace(/```json|```/g, '').trim()); }
+  return {
+    prediction:      data.prediction,
+    confidence:      data.confidence,
+    malicious_prob:  data.malicious_probability,
+    benign_prob:     100 - data.malicious_probability,
+    risk_signals:    data.risk_signals,
+    top_features:    Object.entries(data.features).slice(0, 5).map(([name, value]) => ({
+      name, value, risk: 'medium', note: ''
+    }))
+  };
 }
 
 const RISK_COLOR = { high:'#ff4757', medium:'#ffa502', low:'#eccc68', none:'#2ed573' };

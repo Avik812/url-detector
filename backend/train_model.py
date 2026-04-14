@@ -87,7 +87,7 @@ def build_feature_matrix(urls: list[str]) -> pd.DataFrame:
     return pd.DataFrame(records, columns=FEATURE_NAMES)
 
 
-def load_dataset(path: str | None) -> tuple[pd.DataFrame, np.ndarray]:
+def load_dataset(path = None) -> tuple[pd.DataFrame, np.ndarray]:
     if path and os.path.exists(path):
         print(f"Loading dataset from {path}")
         df = pd.read_csv(path)

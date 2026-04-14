@@ -89,7 +89,7 @@ def predict():
         if features['has_suspicious_keyword']:
             risk_signals.append(f"Phishing keyword found in URL")
         if features['url_entropy'] > 4.5:
-            risk_signals.append(f"High URL entropy ({features['url_entropy']:.2f}) — may be obfuscated')
+            risk_signals.append(f"High URL entropy ({features['url_entropy']:.2f}) — may be obfuscated")
         if features['num_subdomains'] > 3:
             risk_signals.append(f"Excessive subdomain depth ({features['num_subdomains']})")
         if features['has_at_symbol']:
