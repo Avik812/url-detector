@@ -1,15 +1,5 @@
 """
 app.py — Flask REST API for Malicious URL Detection
-Loads the trained scikit-learn model and serves predictions.
-
-Setup:
-    pip install flask flask-cors scikit-learn joblib pandas tldextract
-    python train_model.py          # trains & saves model.pkl
-    python app.py                  # starts server on http://localhost:5000
-
-Endpoints:
-    POST /predict   { "url": "https://..." }
-    GET  /health
 """
 
 import json
@@ -18,117 +8,100 @@ import os
 import joblib
 import pandas as pd
 from flask import Flask, jsonify, request
-from flask_cors import CORS
 
-from features import FEATURE_NAMES, extract_features
-from train_model import build_feature_matrix, load_dataset, train_and_evaluate, save_artifacts
+from features import extract_features
 
-# App setup
-
-app = Flask(__name__)
-CORS(app)  # Allow React frontend on any port
-
-model = None
-feature_names = FEATURE_NAMES
+app          = Flask(__name__)
+model        = None
+feature_names = []
+model_name   = ''
 
 
-def ensure_model():
-    """Load model from disk, or train a quick demo model if none exists."""
-    global model
-    if model is not None:
-        return
-
-    if os.path.exists('model.pkl'):
-        model = joblib.load('model.pkl')
-        print("Model loaded from model.pkl")
-    else:
-        print("No model.pkl found — training demo model now...")
-        X, y = load_dataset(None)           # uses built-in demo data
-        clf, name, _, feat_names = train_and_evaluate(X, y)
-        save_artifacts(clf, feat_names, name)
-        model = clf
-        print("Demo model ready.")
+def load_model():
+    global model, feature_names, model_name
+    if not os.path.exists('model.pkl'):
+        raise FileNotFoundError('model.pkl not found — run train_model.py first')
+    if not os.path.exists('model_meta.json'):
+        raise FileNotFoundError('model_meta.json not found — run train_model.py first')
+    model = joblib.load('model.pkl')
+    with open('model_meta.json') as f:
+        meta = json.load(f)
+    feature_names = meta['feature_names']
+    model_name    = meta['model_name']
+    print(f'Model loaded: {model_name} ({len(feature_names)} features)')
 
 
-# Routes
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'ok',
+        'model': model_name,
+        'features': len(feature_names)
+    })
+
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    ensure_model()
-
     data = request.get_json(silent=True)
     if not data or 'url' not in data:
-        return jsonify({'error': 'Request body must be JSON with a "url" field.'}), 400
+        return jsonify({'error': 'Send JSON with a "url" key'}), 400
 
     url = str(data['url']).strip()
     if not url:
-        return jsonify({'error': 'URL cannot be empty.'}), 400
+        return jsonify({'error': 'url is empty'}), 400
 
     try:
-        features = extract_features(url)
-        X = pd.DataFrame([features], columns=feature_names)
+        feats = extract_features(url)
+        X = pd.DataFrame([feats], columns=feature_names)
 
-        prediction  = int(model.predict(X)[0])
-        proba       = model.predict_proba(X)[0].tolist()   # [p_benign, p_malicious]
+        proba = model.predict_proba(X)[0].tolist()
+        mal_p = proba[1]
+        ben_p = proba[0]
 
-        label       = 'malicious' if prediction == 1 else 'benign'
-        confidence  = round(max(proba) * 100, 2)
-        malicious_p = round(proba[1] * 100, 2)
-        benign_p    = round(proba[0] * 100, 2)
+        # Threshold: 0.75 — model must be 75% confident to flag as malicious
+        # This reduces false positives on legitimate sites
+        label = 'malicious' if mal_p >= 0.75 else 'benign'
 
-        # Build human-readable risk signals for the UI
-        risk_signals = []
-        if features['has_ip_address']:
-            risk_signals.append('URL contains a raw IP address')
-        if features['suspicious_tld']:
-            risk_signals.append('Suspicious top-level domain detected')
-        if features['has_suspicious_keyword']:
-            risk_signals.append(f"Phishing keyword found in URL")
-        if features['url_entropy'] > 4.5:
-            risk_signals.append(f"High URL entropy ({features['url_entropy']:.2f}) — may be obfuscated")
-        if features['num_subdomains'] > 3:
-            risk_signals.append(f"Excessive subdomain depth ({features['num_subdomains']})")
-        if features['has_at_symbol']:
-            risk_signals.append('@ symbol detected — may be hiding true host')
-        if features['num_hyphens'] > 4:
-            risk_signals.append(f"Many hyphens ({features['num_hyphens']}) — common in spoofed domains")
-        if not features['has_https']:
-            risk_signals.append('Not using HTTPS')
-        if features['num_redirects'] > 1:
-            risk_signals.append('Multiple redirects detected')
+        confidence = round(max(proba) * 100, 1)
+
+        # Human-readable risk signals
+        signals = []
+        if feats['has_ip']:
+            signals.append('Raw IP address used instead of domain name')
+        if feats['suspicious_tld']:
+            signals.append('Suspicious top-level domain detected')
+        if feats['has_suspicious_keyword']:
+            signals.append('Phishing keyword detected in URL')
+        if feats['url_entropy'] > 4.5:
+            signals.append(f"High URL entropy ({feats['url_entropy']:.2f}) — possible obfuscation")
+        if feats['many_subdomains']:
+            signals.append(f"Excessive subdomain depth ({feats['n_subdomains']} subdomains)")
+        if feats['has_at']:
+            signals.append('@ symbol found — may be hiding the real destination')
+        if feats['domain_n_hyphens'] > 3:
+            signals.append(f"Many hyphens in domain ({feats['domain_n_hyphens']})")
+        if not feats['is_https']:
+            signals.append('Not using HTTPS')
+        if feats['has_hex_chars']:
+            signals.append('Hex-encoded characters detected — possible obfuscation')
+        if feats['long_domain']:
+            signals.append('Unusually long domain name')
 
         return jsonify({
-            'url':               url,
-            'prediction':        label,
-            'confidence':        confidence,
-            'malicious_prob':    malicious_p,
-            'benign_prob':       benign_p,
-            'risk_signals':      risk_signals,
-            'features':          features,
+            'url':            url,
+            'prediction':     label,
+            'confidence':     confidence,
+            'malicious_prob': round(mal_p * 100, 1),
+            'benign_prob':    round(ben_p * 100, 1),
+            'risk_signals':   signals,
+            'features':       feats,
         })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/health', methods=['GET'])
-def health():
-    ensure_model()
-    return jsonify({
-        'status':       'ok',
-        'model_loaded': model is not None,
-        'num_features': len(feature_names),
-    })
-
-
-@app.route('/features', methods=['GET'])
-def list_features():
-    return jsonify({'features': feature_names})
-
-
-# Run
-
 if __name__ == '__main__':
-    ensure_model()
-    print("\nServer running at http://localhost:5001")
-    app.run(debug=True, port=5001)
+    load_model()
+    print('Server running at http://localhost:5001')
+    app.run(debug=False, port=5001)

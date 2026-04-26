@@ -1,21 +1,9 @@
 """
-train_model.py — Train & Evaluate the Malicious URL Classifier
-Uses scikit-learn with NLP-extracted features. Compares RF, SVM, and LR.
-
-Dataset format (CSV):
-    url,label
-    https://google.com,0
-    http://192.168.1.1/login.php,1
-    ...
-  label: 0 = benign, 1 = malicious
-
-Recommended datasets:
-  - PhishTank (https://www.phishtank.com/developer_info.php)
-  - ISCX URL dataset (https://www.unb.ca/cic/datasets/url-2016.html)
-  - Kaggle malicious URL dataset
+train_model.py — Train Malicious URL Classifier
 
 Usage:
-    python train_model.py --data dataset.csv
+    python train_model.py --data data/malicious_phish.csv
+    python train_model.py   # uses demo data
 """
 
 import argparse
@@ -31,46 +19,42 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score, classification_report,
-    confusion_matrix, roc_auc_score
+    roc_auc_score, precision_recall_fscore_support
 )
-from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
 
 from features import FEATURE_NAMES, extract_features
 
-# Demo data — small hardcoded set for quick testing (replace with real CSV)
+# ---------------------------------------------------------------------------
+# Demo URLs — used when no CSV is provided
+# ---------------------------------------------------------------------------
 
-DEMO_URLS = [
-    # Benign (label = 0)
-    ('https://www.google.com', 0),
+DEMO = [
+    ('https://google.com/search?q=python', 0),
     ('https://github.com/user/repo', 0),
     ('https://stackoverflow.com/questions/123', 0),
     ('https://en.wikipedia.org/wiki/Python', 0),
-    ('https://www.apple.com/iphone', 0),
-    ('https://www.amazon.com/dp/B08N5WRWNW', 0),
-    ('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 0),
+    ('https://apple.com/iphone', 0),
+    ('https://amazon.com/dp/B08N5WRWNW', 0),
+    ('https://youtube.com/watch?v=dQw4w9WgXcQ', 0),
     ('https://docs.python.org/3/library/re.html', 0),
-    ('https://pytorch.org/docs/stable/index.html', 0),
-    ('https://www.bbc.com/news/world', 0),
-    ('https://www.nytimes.com/section/technology', 0),
+    ('https://bbc.com/news/world', 0),
     ('https://reddit.com/r/python', 0),
-    ('https://www.linkedin.com/jobs', 0),
+    ('https://linkedin.com/jobs', 0),
+    ('https://microsoft.com/en-us/windows', 0),
+    ('https://nytimes.com/section/technology', 0),
+    ('https://psu.instructure.com/', 0),
     ('https://mail.google.com/mail/u/0/', 0),
-    ('https://www.microsoft.com/en-us/windows', 0),
-
-    # Malicious / Phishing (label = 1)
     ('http://192.168.1.1/login-paypal-secure.php', 1),
     ('http://secure-paypal-login.tk/verify?account=1', 1),
     ('http://amazon-account-update.xyz/signin', 1),
     ('http://login.ebay.com.phishing-site.cf/verify', 1),
     ('http://bankofamerica-secure.ml/account/locked', 1),
-    ('http://www.paypal.com.alert-verify.pw/update', 1),
-    ('http://192.0.2.1/admin/login?redirect=bank', 1),
+    ('http://paypal.com.alert-verify.pw/update', 1),
     ('http://free-prize-winner-claim.gq/enter?user=you', 1),
     ('http://apple-id-verify-account.top/signin', 1),
-    ('http://microsofft.com-support-alert.link/fix', 1),
     ('http://secure.login.paypal-billing-update.xyz', 1),
     ('http://unusual-signin-activity.ml/verify', 1),
     ('http://wallet-bonus-free.click/claim?ref=abc', 1),
@@ -79,19 +63,20 @@ DEMO_URLS = [
     ('http://ebay.com.password-reset-secure.tk/confirm', 1),
 ]
 
-def build_feature_matrix(urls):
+
+def build_X(urls):
     records = []
     for u in urls:
         try:
             records.append(extract_features(u))
         except Exception:
-            records.append({f: 0 for f in FEATURE_NAMES})
+            records.append({k: 0 for k in FEATURE_NAMES})
     return pd.DataFrame(records, columns=FEATURE_NAMES)
 
 
-def load_dataset(path=None):
+def load_data(path=None):
     if path and os.path.exists(path):
-        print(f"Loading dataset from {path}")
+        print(f'Loading {path} ...')
         df = pd.read_csv(path)
         label_col = 'label' if 'label' in df.columns else 'type'
         urls = df['url'].tolist()
@@ -99,124 +84,115 @@ def load_dataset(path=None):
             y = (df[label_col] != 'benign').astype(int).values
         else:
             y = df[label_col].values.astype(int)
-        X = build_feature_matrix(urls)
-        print(f"  Loaded {len(df)} rows — {y.sum()} malicious, {(y==0).sum()} benign")
+        X = build_X(urls)
+        print(f'  {len(y):,} rows — {y.sum():,} malicious / {(y==0).sum():,} benign')
+        return X, y
     else:
-        print("No dataset file found. Using built-in demo data.")
-        urls, labels = zip(*DEMO_URLS)
-        X = build_feature_matrix(list(urls))
+        print('No dataset — using built-in demo data')
+        urls, labels = zip(*DEMO)
+        X = build_X(list(urls))
         y = np.array(labels)
-        print(f"  Demo set: {len(y)} rows — {y.sum()} malicious, {(y==0).sum()} benign")
-    return X, y
+        print(f'  {len(y)} rows — {y.sum()} malicious / {(y==0).sum()} benign')
+        return X, y
 
 
-
-# Model definitions
-
-def get_models() -> dict:
+def get_models():
     return {
         'Random Forest': RandomForestClassifier(
-            n_estimators=200, max_depth=None, min_samples_split=2,
-            random_state=42, n_jobs=-1
+            n_estimators=300,
+            max_depth=None,
+            min_samples_leaf=2,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1
         ),
-        'SVM (RBF)': Pipeline([
-            ('scaler', StandardScaler()),
-            ('svm',    SVC(kernel='rbf', C=10, gamma='scale', probability=True, random_state=42))
-        ]),
         'Logistic Regression': Pipeline([
-            ('scaler', StandardScaler()),
-            ('lr',     LogisticRegression(C=1.0, max_iter=1000, random_state=42))
+            ('scale', StandardScaler()),
+            ('lr', LogisticRegression(
+                C=1.0, max_iter=1000,
+                class_weight='balanced',
+                random_state=42
+            )),
         ]),
         'Gradient Boosting': GradientBoostingClassifier(
-            n_estimators=100, learning_rate=0.1, max_depth=4, random_state=42
+            n_estimators=150,
+            learning_rate=0.1,
+            max_depth=5,
+            random_state=42
         ),
     }
 
 
-# Training & evaluation
+def run(path=None):
+    X, y = load_data(path)
 
-def train_and_evaluate(X: pd.DataFrame, y: np.ndarray) -> tuple:
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    models   = get_models()
-    results  = {}
-    best_clf = None
-    best_acc = 0.0
-    best_name = ''
+    best_clf, best_name, best_f1 = None, '', 0.0
 
-    print("\n" + "="*60)
-    print("  MODEL COMPARISON")
-    print("="*60)
+    print('\n' + '='*65)
+    print('  MODEL COMPARISON')
+    print('='*65)
 
-    for name, clf in models.items():
+    for name, clf in get_models().items():
+        print(f'\n  Training {name}...')
         clf.fit(X_train, y_train)
+
         y_pred  = clf.predict(X_test)
-        y_proba = clf.predict_proba(X_test)[:, 1] if hasattr(clf, 'predict_proba') else None
+        y_proba = clf.predict_proba(X_test)[:, 1]
 
-        acc    = accuracy_score(y_test, y_pred)
-        auc    = roc_auc_score(y_test, y_proba) if y_proba is not None else None
-        cv_acc = cross_val_score(clf, X, y, cv=5, scoring='accuracy').mean()
+        acc = accuracy_score(y_test, y_pred)
+        auc = roc_auc_score(y_test, y_proba)
+        cv  = cross_val_score(clf, X, y, cv=5, scoring='f1').mean()
+        p, r, f1, _ = precision_recall_fscore_support(y_test, y_pred, average='macro')
 
-        results[name] = {'accuracy': acc, 'auc': auc, 'cv_accuracy': cv_acc}
+        print(f'    Accuracy  : {acc*100:.2f}%')
+        print(f'    ROC-AUC   : {auc*100:.2f}%')
+        print(f'    Macro F1  : {f1*100:.2f}%')
+        print(f'    CV F1     : {cv*100:.2f}%')
+        print(classification_report(
+            y_test, y_pred,
+            target_names=['Benign', 'Malicious'], digits=3
+        ))
 
-        print(f"\n  {name}")
-        print(f"    Test Accuracy : {acc*100:.2f}%")
-        print(f"    ROC-AUC       : {auc*100:.2f}%" if auc else "    ROC-AUC       : N/A")
-        print(f"    5-Fold CV Acc : {cv_acc*100:.2f}%")
-        print(f"\n  {classification_report(y_test, y_pred, target_names=['Benign','Malicious'])}")
+        if f1 > best_f1:
+            best_f1, best_clf, best_name = f1, clf, name
 
-        if acc > best_acc:
-            best_acc  = acc
-            best_clf  = clf
-            best_name = name
+    print('='*65)
+    print(f'  Best Model: {best_name} — F1 {best_f1*100:.2f}%')
+    print('='*65)
 
-    print("="*60)
-    print(f"  Best Model: {best_name} — {best_acc*100:.2f}% accuracy")
-    print("="*60)
+    # Save model
+    joblib.dump(best_clf, 'model.pkl')
 
-    return best_clf, best_name, results, X_train.columns.tolist()
-
-
-def save_artifacts(clf, feature_names: list[str], model_name: str) -> None:
-    joblib.dump(clf, 'model.pkl')
-    print("\n  Saved: model.pkl")
-
-    # Feature importances (only for tree-based models)
-    raw_clf = clf[-1] if hasattr(clf, '__getitem__') else clf
-    if hasattr(raw_clf, 'feature_importances_'):
-        importance = dict(zip(feature_names, raw_clf.feature_importances_.tolist()))
-        importance_sorted = dict(
-            sorted(importance.items(), key=lambda x: x[1], reverse=True)
-        )
-        with open('feature_importance.json', 'w') as f:
-            json.dump(importance_sorted, f, indent=2)
-        print("  Saved: feature_importance.json")
-
-        print("\n  Top 10 Features:")
-        for feat, score in list(importance_sorted.items())[:10]:
-            bar = '█' * int(score * 100)
-            print(f"    {feat:<30} {score:.4f}  {bar}")
-
-    meta = {'model_name': model_name, 'feature_names': feature_names}
+    meta = {
+        'model_name': best_name,
+        'feature_names': X_train.columns.tolist()
+    }
     with open('model_meta.json', 'w') as f:
         json.dump(meta, f, indent=2)
-    print("  Saved: model_meta.json")
 
+    # Feature importance
+    raw = best_clf[-1] if hasattr(best_clf, '__getitem__') else best_clf
+    if hasattr(raw, 'feature_importances_'):
+        imp = dict(zip(X_train.columns, raw.feature_importances_))
+        imp = dict(sorted(imp.items(), key=lambda x: x[1], reverse=True))
+        with open('feature_importance.json', 'w') as f:
+            json.dump(imp, f, indent=2)
+        print('\n  Top 10 Features:')
+        for feat, score in list(imp.items())[:10]:
+            bar = '█' * int(score * 80)
+            print(f'    {feat:<28} {score:.4f}  {bar}')
 
-# Entry point
+    print('\n  Saved: model.pkl  model_meta.json  feature_importance.json')
+    print('  Run: python app.py\n')
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Train Malicious URL Classifier')
+    parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=None,
-                        help='Path to CSV dataset (url, label columns)')
+                        help='Path to CSV with url and label/type columns')
     args = parser.parse_args()
-
-    X, y = load_dataset(args.data)
-
-    clf, model_name, results, feat_names = train_and_evaluate(X, y)
-
-    save_artifacts(clf, feat_names, model_name)
-
-    print("\n  Training complete. Run `python app.py` to start the API server.")
+    run(args.data)
